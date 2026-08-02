@@ -7,9 +7,14 @@ from dataclasses import dataclass, field
 
 import anthropic
 
+from natural_trading.config import DEFAULT_ANTHROPIC_MODEL
 from natural_trading.screening.llm_screen import SYSTEM_PROMPT
 
-DEFAULT_MODEL = "claude-sonnet-4-5"
+# Re-exported from config.py, the single source of truth for this default — main.py
+# always passes anthropic.input's configured model explicitly, so this only matters
+# for a caller that constructs LiveAnthropicClient directly without specifying one
+# (e.g. a test).
+DEFAULT_MODEL = DEFAULT_ANTHROPIC_MODEL
 # The model is asked to reason step-by-step before its final JSON verdict (see
 # llm_screen.SYSTEM_PROMPT) — 200 tokens was enough for a bare JSON answer but cuts
 # off a full reasoning trace before the final line, which would make

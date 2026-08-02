@@ -153,8 +153,10 @@ def main() -> None:
     ibkr_config = load_ibkr_config(IBKR_FILE)
     logger.info("Loaded coordinates: %s, %s", coordinates.latitude, coordinates.longitude)
 
-    llm_client = LiveAnthropicClient(api_key=anthropic_config.api_key)
-    logger.info("Anthropic client ready: %s", type(llm_client).__name__)
+    llm_client = LiveAnthropicClient(api_key=anthropic_config.api_key, model=anthropic_config.model)
+    logger.info(
+        "Anthropic client ready: %s (model=%s)", type(llm_client).__name__, anthropic_config.model
+    )
 
     astro = build_astro_source(coordinates)
     logger.info("Astro source ready: %s", type(astro).__name__)

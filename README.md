@@ -155,10 +155,12 @@ port=4002
 client_id=7
 ```
 
-**`anthropic.input`** — Anthropic API key for the LLM screening step. Gitignored;
-never commit a real key.
+**`anthropic.input`** — Anthropic API key and model for the LLM screening step.
+Gitignored; never commit a real key. `model` is optional — omit it to use the default
+(`claude-sonnet-5`).
 ```
 api_key=REPLACE_WITH_YOUR_ANTHROPIC_API_KEY
+model=claude-sonnet-5
 ```
 
 ## Setup

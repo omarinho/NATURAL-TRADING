@@ -30,12 +30,19 @@ class IBAccountClient:
     def fetch_short_sale_buying_power(self) -> float:
         """Buying power available for new SHORT orders, freshly queried on every call.
 
-        IBKR's `accountSummary()` reports a single unified 'BuyingPower' figure for a
-        standard margin account — it already reflects the margin usable in either
-        direction, and the API exposes no separate short-sale-specific dollar tag.
-        This re-queries the same tag rather than fabricating a distinct one, but is
-        kept as its own method (not an alias) so an account type that *does* expose a
-        distinct short-sale/borrow-availability tag only needs to change this method.
+        Only a rough, upfront sizing signal — NOT an accurate prediction of whether a
+        specific short order will be accepted. IBKR's `accountSummary()` reports a
+        single unified 'BuyingPower' figure reflecting standard Reg T leverage (4x
+        equity in this account), but the API exposes no separate short-sale-specific
+        dollar tag, and confirmed empirically against the real paper Gateway: real
+        margin requirements for shorting a specific security — especially a
+        volatile/low-priced one — can be far higher than this figure suggests (a
+        $10,000 BuyingPower reading still had real orders rejected needing $7,890 of
+        initial margin against $2,500 of equity). The accurate, per-order check is
+        `ib_order_submitter.IBOrderSubmitter.submit()`'s `ib.whatIfOrder()` call
+        immediately before each real submission — this method only feeds the coarse
+        pre-submission sizing pass in `sizing.apply_buying_power_check`, which still
+        catches wildly-oversized requests before they ever reach the real check.
         """
         return self._fetch_tag(BUYING_POWER_TAG)
 

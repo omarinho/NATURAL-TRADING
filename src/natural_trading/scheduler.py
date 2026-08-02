@@ -23,7 +23,7 @@ from natural_trading.sizing import (
 
 
 class OrderSubmitter(Protocol):
-    def submit(self, order: TradeOrder) -> None: ...
+    def submit(self, order: TradeOrder) -> bool: ...
 
 
 class AccountClient(Protocol):
@@ -33,6 +33,7 @@ class AccountClient(Protocol):
 
     def fetch_buying_power(self) -> float: ...
     def fetch_short_sale_buying_power(self) -> float: ...
+    def fetch_positions(self) -> dict[str, float]: ...
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,7 @@ def run_new_moon_cycle(
     short_sale_buying_power: float,
     prices: dict[str, float],
     submitter: OrderSubmitter,
+    already_held_symbols: frozenset[str] = frozenset(),
 ) -> NewMoonCycleResult:
     """Runs synchronously to completion with no sleep/wait/queue step — REQ-012
     requires orders to be submitted immediately regardless of market hours.
@@ -119,7 +121,15 @@ def run_new_moon_cycle(
     `prices` (symbol -> current price per share) converts each symbol's sized dollar
     amount into a whole-share order quantity via `shares_from_dollar_amount` — IBKR's
     API rejects fractional-share MARKET orders outright, and a dollar amount is not
-    itself a share count."""
+    itself a share count.
+
+    `already_held_symbols` (REQ-014 no-pyramiding + crash-recovery safety): a symbol
+    with an existing non-zero position is never resubmitted, regardless of whether it
+    still qualifies. This is what stops a crash-mid-cycle-then-restart from
+    resubmitting an opening order for a symbol a partially-completed earlier attempt
+    already filled — see state.py's save_last_processed_trigger docstring for why
+    last_processed alone can't protect against that. Defaults to empty so direct
+    callers that don't need this (e.g. most existing tests) are unaffected."""
     if is_solstice_straddling_cycle(new_moon_instant, following_full_moon_instant, astro):
         return NewMoonCycleResult(orders_submitted=[], skipped_straddle=True)
 
@@ -135,12 +145,20 @@ def run_new_moon_cycle(
     # A sized dollar amount smaller than one share's price floors to 0 shares (e.g. a
     # thinly-capitalized account split across many candidates, some high-priced) —
     # IBKR rejects a 0-quantity order outright ("size value cannot be zero"), so skip
-    # it here rather than submit an order guaranteed to fail.
-    fundable_symbols = [s for s in qualifying_symbols if quantities[s] > 0]
+    # it here rather than submit an order guaranteed to fail. A symbol already held is
+    # skipped for the same reason a zero-quantity one is: submitting would be wrong,
+    # not just redundant.
+    fundable_symbols = [
+        s for s in qualifying_symbols if quantities[s] > 0 and s not in already_held_symbols
+    ]
     orders = build_opening_orders(fundable_symbols, quantities, season)
-    for order in orders:
-        submitter.submit(order)
-    return NewMoonCycleResult(orders_submitted=orders, skipped_straddle=False)
+    # submit() returns False (and does not place the order) when a real, per-order
+    # whatIfOrder margin check would be rejected — orders_submitted reflects only
+    # what was actually accepted, not everything attempted (see
+    # ib_order_submitter.IBOrderSubmitter.submit's docstring for why a single
+    # upfront buying-power figure can't predict this).
+    actually_submitted = [order for order in orders if submitter.submit(order)]
+    return NewMoonCycleResult(orders_submitted=actually_submitted, skipped_straddle=False)
 
 
 def run_new_moon_cycle_live(
@@ -167,9 +185,17 @@ def run_new_moon_cycle_live(
     symbol's V (today's New Moon price) moments earlier while screening it — reusing
     that same value means sizing is computed against the exact price that made the
     candidate qualify, not a separately-fetched live quote that could differ (and
-    would also mean 9 extra live-data requests for a price already known)."""
+    would also mean 9 extra live-data requests for a price already known).
+
+    Also queries `account.fetch_positions()` for the same reason: a symbol already
+    held (non-zero position) is passed through as `already_held_symbols` so
+    `run_new_moon_cycle` skips resubmitting an opening order for it — see that
+    function's docstring for the crash-recovery scenario this guards against."""
     buying_power = account.fetch_buying_power()
     short_sale_buying_power = account.fetch_short_sale_buying_power()
+    already_held_symbols = frozenset(
+        symbol for symbol, quantity in account.fetch_positions().items() if quantity != 0
+    )
     return run_new_moon_cycle(
         new_moon_instant=new_moon_instant,
         following_full_moon_instant=following_full_moon_instant,
@@ -180,6 +206,7 @@ def run_new_moon_cycle_live(
         short_sale_buying_power=short_sale_buying_power,
         prices=prices,
         submitter=submitter,
+        already_held_symbols=already_held_symbols,
     )
 
 
@@ -187,8 +214,9 @@ def run_full_moon_cycle(
     open_positions: dict[str, float], submitter: OrderSubmitter
 ) -> list[TradeOrder]:
     """REQ-010: flattens every open lunar-stock position with a MARKET order,
-    submitted immediately with no wait step."""
+    submitted immediately with no wait step. Closing orders reduce margin usage, so
+    the real whatIfOrder check inside submit() should always pass in practice — but
+    the returned list still reflects only what actually got submitted, for the same
+    reason run_new_moon_cycle's does."""
     orders = build_closing_orders(open_positions)
-    for order in orders:
-        submitter.submit(order)
-    return orders
+    return [order for order in orders if submitter.submit(order)]

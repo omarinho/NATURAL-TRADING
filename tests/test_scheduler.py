@@ -128,6 +128,66 @@ def test_symbol_sized_to_zero_shares_is_skipped_not_submitted(
     submitter.submit.assert_called_once()
 
 
+def test_symbol_with_existing_position_is_skipped_not_resubmitted(
+    stub_astro_source: type[StubAstroSource],
+) -> None:
+    """Crash-recovery safety: if a process crashes mid-cycle after submitting an
+    opening order for one qualifying symbol but before the others, a restart within
+    the catch-up window re-runs the whole cycle from scratch (fresh scan, fresh LLM
+    screening) with no other memory of what already happened. already_held_symbols is
+    what stops that retry from resubmitting an opening order for a symbol that
+    already has a real position — this strategy has no stop-loss of any kind, so a
+    duplicated position is not a cosmetic bug."""
+    astro = stub_astro_source(
+        winter_solstices=[_dt(2023, 12, 22)],
+        summer_solstices=[_dt(2023, 6, 21), _dt(2024, 6, 20)],
+    )
+    submitter = MagicMock()
+    result = run_new_moon_cycle(
+        new_moon_instant=_dt(2024, 3, 10),
+        following_full_moon_instant=_dt(2024, 3, 25),
+        astro=astro,
+        qualifying_symbols=["AAA", "BBB"],
+        equity=100_000,
+        buying_power=100_000,
+        short_sale_buying_power=100_000,
+        prices={"AAA": 100.0, "BBB": 100.0},
+        submitter=submitter,
+        already_held_symbols=frozenset({"AAA"}),
+    )
+    assert {o.symbol for o in result.orders_submitted} == {"BBB"}
+    submitter.submit.assert_called_once()
+
+
+def test_orders_submitted_excludes_symbols_the_real_margin_check_rejected(
+    stub_astro_source: type[StubAstroSource],
+) -> None:
+    """submitter.submit() returns False when IBOrderSubmitter's real whatIfOrder
+    margin check fails — orders_submitted must reflect only what was genuinely
+    accepted, matching the actual account/order state, not everything attempted."""
+    astro = stub_astro_source(
+        winter_solstices=[_dt(2023, 12, 22)],
+        summer_solstices=[_dt(2023, 6, 21), _dt(2024, 6, 20)],
+    )
+    submitter = MagicMock()
+    submitter.submit.side_effect = [True, False]  # AAA accepted, BBB margin-rejected
+
+    result = run_new_moon_cycle(
+        new_moon_instant=_dt(2024, 3, 10),
+        following_full_moon_instant=_dt(2024, 3, 25),
+        astro=astro,
+        qualifying_symbols=["AAA", "BBB"],
+        equity=100_000,
+        buying_power=100_000,
+        short_sale_buying_power=100_000,
+        prices={"AAA": 100.0, "BBB": 100.0},
+        submitter=submitter,
+    )
+
+    assert submitter.submit.call_count == 2  # both were attempted
+    assert {o.symbol for o in result.orders_submitted} == {"AAA"}  # only one accepted
+
+
 def test_next_trigger_computed_from_astro_source_not_fixed_offset(
     stub_astro_source: type[StubAstroSource],
 ) -> None:
@@ -308,6 +368,69 @@ def test_scheduler_module_contains_no_market_session_gating_before_submission() 
         assert token not in text
 
 
+# ─── Crash-recovery: already-held positions block a resubmitted opening order ───────
+
+
+def test_run_new_moon_cycle_live_skips_symbols_with_existing_positions(
+    stub_astro_source: type[StubAstroSource],
+) -> None:
+    """Simulates the crash-then-restart scenario directly: AAA already has a real,
+    non-zero position (as if an earlier partial run's order for it already filled),
+    BBB does not. The retry must open BBB but must not resubmit AAA."""
+    astro = stub_astro_source(
+        winter_solstices=[_dt(2023, 12, 22)],
+        summer_solstices=[_dt(2023, 6, 21), _dt(2024, 6, 20)],
+    )
+    account = MagicMock()
+    account.fetch_buying_power.return_value = 100_000.0
+    account.fetch_short_sale_buying_power.return_value = 100_000.0
+    account.fetch_positions.return_value = {"AAA": 10.0}
+    submitter = MagicMock()
+
+    result = run_new_moon_cycle_live(
+        new_moon_instant=_dt(2024, 3, 10),
+        following_full_moon_instant=_dt(2024, 3, 25),
+        astro=astro,
+        qualifying_symbols=["AAA", "BBB"],
+        equity=100_000,
+        prices={"AAA": 100.0, "BBB": 100.0},
+        account=account,
+        submitter=submitter,
+    )
+
+    account.fetch_positions.assert_called_once()
+    assert {o.symbol for o in result.orders_submitted} == {"BBB"}
+
+
+def test_run_new_moon_cycle_live_ignores_zero_quantity_positions_as_not_held(
+    stub_astro_source: type[StubAstroSource],
+) -> None:
+    """A flat (zero-quantity) position entry from IBKR must not be treated as
+    "already held" — only a genuinely non-zero position should block the order."""
+    astro = stub_astro_source(
+        winter_solstices=[_dt(2023, 12, 22)],
+        summer_solstices=[_dt(2023, 6, 21), _dt(2024, 6, 20)],
+    )
+    account = MagicMock()
+    account.fetch_buying_power.return_value = 100_000.0
+    account.fetch_short_sale_buying_power.return_value = 100_000.0
+    account.fetch_positions.return_value = {"AAA": 0.0}
+    submitter = MagicMock()
+
+    result = run_new_moon_cycle_live(
+        new_moon_instant=_dt(2024, 3, 10),
+        following_full_moon_instant=_dt(2024, 3, 25),
+        astro=astro,
+        qualifying_symbols=["AAA"],
+        equity=100_000,
+        prices={"AAA": 100.0},
+        account=account,
+        submitter=submitter,
+    )
+
+    assert {o.symbol for o in result.orders_submitted} == {"AAA"}
+
+
 # ─── REQ-016 ────────────────────────────────────────────────────────────────────────
 
 
@@ -321,6 +444,7 @@ def test_run_new_moon_cycle_live_fetches_fresh_buying_power_before_submission(
     account = MagicMock()
     account.fetch_buying_power.return_value = 100_000.0
     account.fetch_short_sale_buying_power.return_value = 100_000.0
+    account.fetch_positions.return_value = {}
     submitter = MagicMock()
 
     result = run_new_moon_cycle_live(
@@ -348,6 +472,7 @@ def test_run_new_moon_cycle_live_uses_short_sale_buying_power_in_sell_season(
     account = MagicMock()
     account.fetch_buying_power.return_value = 100_000.0
     account.fetch_short_sale_buying_power.return_value = 100_000.0
+    account.fetch_positions.return_value = {}
     submitter = MagicMock()
 
     run_new_moon_cycle_live(
@@ -378,6 +503,7 @@ def test_run_new_moon_cycle_live_sizes_down_when_fresh_buying_power_is_lower(
     account = MagicMock()
     account.fetch_buying_power.return_value = 5_000.0  # far below the 20,000 target
     account.fetch_short_sale_buying_power.return_value = 5_000.0
+    account.fetch_positions.return_value = {}
     submitter = MagicMock()
 
     result = run_new_moon_cycle_live(
@@ -404,6 +530,7 @@ def test_run_new_moon_cycle_live_refetches_every_call_not_cached(
     account = MagicMock()
     account.fetch_buying_power.side_effect = [5_000.0, 20_000.0]
     account.fetch_short_sale_buying_power.side_effect = [5_000.0, 20_000.0]
+    account.fetch_positions.return_value = {}
     submitter = MagicMock()
 
     def _run() -> float:

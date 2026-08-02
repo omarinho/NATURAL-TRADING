@@ -19,6 +19,11 @@ DEFAULT_IBKR_HOST = "127.0.0.1"
 DEFAULT_IBKR_PORT = 4002
 DEFAULT_IBKR_CLIENT_ID = 7
 
+# Used only when anthropic.input omits a `model` key — see screening/anthropic_client.py's
+# LiveAnthropicClient, which is always constructed with this value passed explicitly by
+# main.py (never relying on that class's own dataclass-field default).
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
+
 
 def _parse_key_value_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -47,11 +52,15 @@ def load_coordinates(path: Path) -> Coordinates:
 @dataclass(frozen=True)
 class AnthropicConfig:
     api_key: str
+    model: str = DEFAULT_ANTHROPIC_MODEL
 
 
 def load_anthropic_config(path: Path) -> AnthropicConfig:
     values = _parse_key_value_file(path)
-    return AnthropicConfig(api_key=values.get("api_key", ""))
+    return AnthropicConfig(
+        api_key=values.get("api_key", ""),
+        model=values.get("model", DEFAULT_ANTHROPIC_MODEL),
+    )
 
 
 @dataclass(frozen=True)

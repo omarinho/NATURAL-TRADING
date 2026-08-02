@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from natural_trading.config import (
+    DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_LATITUDE,
     DEFAULT_LONGITUDE,
     load_anthropic_config,
@@ -77,6 +78,20 @@ def test_anthropic_api_key_read_from_anthropic_input_at_runtime(tmp_path: Path) 
     f.write_text("api_key=sk-ant-test-1234\n")
     cfg = load_anthropic_config(f)
     assert cfg.api_key == "sk-ant-test-1234"
+
+
+def test_anthropic_model_read_from_anthropic_input_when_present(tmp_path: Path) -> None:
+    f = tmp_path / "anthropic.input"
+    f.write_text("api_key=sk-ant-test-1234\nmodel=claude-opus-5\n")
+    cfg = load_anthropic_config(f)
+    assert cfg.model == "claude-opus-5"
+
+
+def test_anthropic_model_defaults_to_sonnet_5_when_not_specified(tmp_path: Path) -> None:
+    f = tmp_path / "anthropic.input"
+    f.write_text("api_key=sk-ant-test-1234\n")
+    cfg = load_anthropic_config(f)
+    assert cfg.model == DEFAULT_ANTHROPIC_MODEL == "claude-sonnet-5"
 
 
 def test_no_hardcoded_anthropic_api_key_literal_in_source() -> None:

@@ -102,16 +102,22 @@ def test_historical_close_fetch_uses_mocked_ib_reqhistoricaldata_only() -> None:
 
 
 def test_live_price_fetch_uses_mocked_ib_live_quote_method() -> None:
+    # reqTickers is ib_async's blocking snapshot helper — it waits for the ticker to
+    # populate before returning. reqMktData (what this replaced) returns immediately
+    # with an empty ticker that fills in asynchronously "after a couple of seconds"
+    # per its own docstring — reading .last right away would almost always read a
+    # stale/NaN value in real use, a gap this test's old mock (which pre-populated
+    # ticker.last directly) could never have caught.
     mock_ib = MagicMock()
     mock_ticker = MagicMock()
     mock_ticker.last = 210.25
-    mock_ib.reqMktData.return_value = mock_ticker
+    mock_ib.reqTickers.return_value = [mock_ticker]
 
     client = IBPriceClient(ib=mock_ib)
     price = client.fetch_live_price("AAPL")
 
-    mock_ib.qualifyContracts.assert_called_once()  # populates conId before reqMktData
-    mock_ib.reqMktData.assert_called_once()
+    mock_ib.qualifyContracts.assert_called_once()  # populates conId before reqTickers
+    mock_ib.reqTickers.assert_called_once()
     assert price == 210.25
 
 

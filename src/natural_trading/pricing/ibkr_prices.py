@@ -36,13 +36,17 @@ class IBPriceClient:
         from ib_async import Stock
 
         contract = Stock(symbol, "SMART", "USD")
-        # reqMktData hashes the contract by conId internally to track the ticker —
-        # an unqualified contract has no conId yet and raises ValueError on that hash
-        # (confirmed empirically against the real Gateway). qualifyContracts fills it
-        # in; reqHistoricalData/reqContractDetails above don't need this, only
-        # reqMktData's ticker-tracking does.
+        # An unqualified contract has no conId yet, which reqMktData/reqTickers hash
+        # internally to track the ticker (confirmed empirically against the real
+        # Gateway). qualifyContracts fills it in; reqHistoricalData/reqContractDetails
+        # above don't need this, only the live-quote path does.
         self.ib.qualifyContracts(contract)
-        ticker = self.ib.reqMktData(contract)
+        # reqTickers is ib_async's blocking snapshot helper — it waits for the ticker
+        # to populate before returning. A plain reqMktData() call returns immediately
+        # with an empty ticker that "gradually (after a couple of seconds)" fills in
+        # per its own docstring — reading .last right away would almost always read a
+        # stale/NaN value instead of the real live price.
+        ticker = self.ib.reqTickers(contract)[0]
         return float(ticker.last)
 
     def fetch_session_reference(self, symbol: str = "SPY") -> tuple[str, str]:
