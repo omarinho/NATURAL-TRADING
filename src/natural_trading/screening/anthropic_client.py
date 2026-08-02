@@ -38,5 +38,12 @@ class LiveAnthropicClient:
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
-        block = response.content[0]
-        return block.text if hasattr(block, "text") else str(block)
+        # Confirmed empirically against the real API: claude-sonnet-5 returns
+        # extended thinking as a leading content block (a ThinkingBlock, no .text
+        # attribute — only an opaque .thinking field), with the actual answer in a
+        # later TextBlock. Reading content[0] unconditionally would silently return
+        # the thinking block's stringified repr instead of the real verdict text.
+        for block in response.content:
+            if hasattr(block, "text"):
+                return str(block.text)
+        return ""
