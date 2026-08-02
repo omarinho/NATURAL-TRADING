@@ -1,0 +1,6 @@
+# IBKR Gateway/TWS connection settings — key=value, comments allowed.
+# Paper trading defaults shown. Migrating to a live account is a config change only:
+# change `port` to the live-account port (see IBKR docs) and restart — no code change.
+host=127.0.0.1
+port=4002
+client_id=7
