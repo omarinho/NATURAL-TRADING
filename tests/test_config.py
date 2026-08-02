@@ -1,5 +1,4 @@
-"""Covers REQ-018 (coordinates.input configurable, key=value, default Bogota),
-REQ-020 (Anthropic API key from anthropic.input, never hardcoded, gitignored), and
+"""Covers REQ-018 (coordinates.input configurable, key=value, default Bogota) and
 REQ-022 (IBKR connection configurable; paper-to-live migration is a config change)."""
 
 from __future__ import annotations
@@ -9,10 +8,8 @@ from pathlib import Path
 import pytest
 
 from natural_trading.config import (
-    DEFAULT_ANTHROPIC_MODEL,
     DEFAULT_LATITUDE,
     DEFAULT_LONGITUDE,
-    load_anthropic_config,
     load_coordinates,
     load_ibkr_config,
 )
@@ -68,46 +65,6 @@ def test_no_hardcoded_lat_long_literal_in_astro_calculation_modules() -> None:
         text = py_file.read_text()
         assert "4.73104" not in text
         assert "74.0417" not in text
-
-
-# ─── REQ-020 ────────────────────────────────────────────────────────────────────────
-
-
-def test_anthropic_api_key_read_from_anthropic_input_at_runtime(tmp_path: Path) -> None:
-    f = tmp_path / "anthropic.input"
-    f.write_text("api_key=sk-ant-test-1234\n")
-    cfg = load_anthropic_config(f)
-    assert cfg.api_key == "sk-ant-test-1234"
-
-
-def test_anthropic_model_read_from_anthropic_input_when_present(tmp_path: Path) -> None:
-    f = tmp_path / "anthropic.input"
-    f.write_text("api_key=sk-ant-test-1234\nmodel=claude-opus-5\n")
-    cfg = load_anthropic_config(f)
-    assert cfg.model == "claude-opus-5"
-
-
-def test_anthropic_model_defaults_to_sonnet_5_when_not_specified(tmp_path: Path) -> None:
-    f = tmp_path / "anthropic.input"
-    f.write_text("api_key=sk-ant-test-1234\n")
-    cfg = load_anthropic_config(f)
-    assert cfg.model == DEFAULT_ANTHROPIC_MODEL == "claude-sonnet-5"
-
-
-def test_no_hardcoded_anthropic_api_key_literal_in_source() -> None:
-    for py_file in SRC_ROOT.rglob("*.py"):
-        assert "sk-ant-" not in py_file.read_text()
-
-
-def test_gitignore_excludes_anthropic_input() -> None:
-    gitignore_text = (REPO_ROOT / ".gitignore").read_text()
-    assert "anthropic.input" in gitignore_text
-
-
-def test_no_env_file_used_for_anthropic_api_key() -> None:
-    assert not (REPO_ROOT / ".env").exists()
-    for py_file in SRC_ROOT.rglob("*.py"):
-        assert "dotenv" not in py_file.read_text().lower()
 
 
 # ─── REQ-022 ────────────────────────────────────────────────────────────────────────

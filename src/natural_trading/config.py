@@ -1,9 +1,9 @@
-"""Runtime configuration loaders — coordinates.input, anthropic.input, ibkr.input.
+"""Runtime configuration loaders — coordinates.input, ibkr.input.
 
-REQ-018 / REQ-020 / REQ-022: geographic coordinates, the Anthropic API key, and the
-IBKR connection parameters are all read at runtime from key=value files at the repo
-root, never hardcoded, so changing a file (or the configured port for a paper-to-live
-migration) changes behavior with no source-code change.
+REQ-018 / REQ-022: geographic coordinates and the IBKR connection parameters are both
+read at runtime from key=value files at the repo root, never hardcoded, so changing a
+file (or the configured port for a paper-to-live migration) changes behavior with no
+source-code change.
 """
 
 from __future__ import annotations
@@ -18,11 +18,6 @@ DEFAULT_LONGITUDE = -74.0417
 DEFAULT_IBKR_HOST = "127.0.0.1"
 DEFAULT_IBKR_PORT = 4002
 DEFAULT_IBKR_CLIENT_ID = 7
-
-# Used only when anthropic.input omits a `model` key — see screening/anthropic_client.py's
-# LiveAnthropicClient, which is always constructed with this value passed explicitly by
-# main.py (never relying on that class's own dataclass-field default).
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5"
 
 
 def _parse_key_value_file(path: Path) -> dict[str, str]:
@@ -47,20 +42,6 @@ def load_coordinates(path: Path) -> Coordinates:
     latitude = float(values.get("latitude", DEFAULT_LATITUDE))
     longitude = float(values.get("longitude", DEFAULT_LONGITUDE))
     return Coordinates(latitude=latitude, longitude=longitude)
-
-
-@dataclass(frozen=True)
-class AnthropicConfig:
-    api_key: str
-    model: str = DEFAULT_ANTHROPIC_MODEL
-
-
-def load_anthropic_config(path: Path) -> AnthropicConfig:
-    values = _parse_key_value_file(path)
-    return AnthropicConfig(
-        api_key=values.get("api_key", ""),
-        model=values.get("model", DEFAULT_ANTHROPIC_MODEL),
-    )
 
 
 @dataclass(frozen=True)

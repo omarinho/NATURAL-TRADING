@@ -1,8 +1,8 @@
 """Entrypoint: `python -m natural_trading.main`.
 
-Wires configuration (coordinates.input, anthropic.input, ibkr.input at the repo root)
-to the astro source, the IBKR Gateway connection, and the Anthropic screening client,
-then runs the perpetual scheduling loop: compute the next New Moon/Full Moon trigger
+Wires configuration (coordinates.input, ibkr.input at the repo root) to the astro
+source and the IBKR Gateway connection, then runs the perpetual scheduling loop:
+compute the next New Moon/Full Moon trigger
 via `scheduler.next_trigger_instant`, sleep until it fires, then dispatch to a New
 Moon cycle (candidate search -> screening -> live sizing -> order submission) or a
 Full Moon cycle (fetch live positions -> close everything).
@@ -32,12 +32,7 @@ from natural_trading.astro.ephem_source import EphemSource
 from natural_trading.astro.season import determine_season, is_solstice_straddling_cycle
 from natural_trading.astro.usno import UsnoSource
 from natural_trading.candidates.scanner import run_candidate_search
-from natural_trading.config import (
-    Coordinates,
-    load_anthropic_config,
-    load_coordinates,
-    load_ibkr_config,
-)
+from natural_trading.config import Coordinates, load_coordinates, load_ibkr_config
 from natural_trading.ib_order_submitter import IBOrderSubmitter
 from natural_trading.ib_scanner_client import IBScannerClient
 from natural_trading.pricing.ibkr_prices import IBPriceClient
@@ -48,13 +43,11 @@ from natural_trading.scheduler import (
     run_full_moon_cycle,
     run_new_moon_cycle_live,
 )
-from natural_trading.screening.anthropic_client import LiveAnthropicClient
 from natural_trading.screening.llm_screen import screen_candidate
 from natural_trading.state import load_last_processed_trigger, save_last_processed_trigger
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COORDINATES_FILE = REPO_ROOT / "coordinates.input"
-ANTHROPIC_FILE = REPO_ROOT / "anthropic.input"
 IBKR_FILE = REPO_ROOT / "ibkr.input"
 TRIGGER_STATE_FILE = REPO_ROOT / "last_trigger.state"
 
@@ -81,7 +74,6 @@ def run_new_moon_trigger(
     coordinates: Coordinates,
     price_client: IBPriceClient,
     scanner_client: IBScannerClient,
-    llm_client: LiveAnthropicClient,
     account: IBAccountClient,
     submitter: IBOrderSubmitter,
 ) -> None:
@@ -115,7 +107,7 @@ def run_new_moon_trigger(
         )
         if prices is None:
             return False
-        result = screen_candidate(llm_client, symbol, prices, season)
+        result = screen_candidate(prices, season)
         if result:
             qualifying_prices[symbol] = prices.v
         return result
@@ -149,14 +141,8 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
     coordinates = load_coordinates(COORDINATES_FILE)
-    anthropic_config = load_anthropic_config(ANTHROPIC_FILE)
     ibkr_config = load_ibkr_config(IBKR_FILE)
     logger.info("Loaded coordinates: %s, %s", coordinates.latitude, coordinates.longitude)
-
-    llm_client = LiveAnthropicClient(api_key=anthropic_config.api_key, model=anthropic_config.model)
-    logger.info(
-        "Anthropic client ready: %s (model=%s)", type(llm_client).__name__, anthropic_config.model
-    )
 
     astro = build_astro_source(coordinates)
     logger.info("Astro source ready: %s", type(astro).__name__)
@@ -211,7 +197,6 @@ def main() -> None:
                     coordinates,
                     price_client,
                     scanner_client,
-                    llm_client,
                     account,
                     submitter,
                 )

@@ -5,10 +5,11 @@ Brokers. Trades are opened and closed on lunar phase days, with the trade direct
 (long/short) determined by the solstice-defined season — no technical indicators, no
 discretionary calls.
 
-> **Status:** business logic complete and fully tested (149/149 tests, 22/22
+> **Status:** business logic complete and fully tested (153/153 tests, 20/20
 > requirements). `main.py` wires the full perpetual scheduling loop plus live IBKR
-> scanner/pricing/account/order-submitter implementations end-to-end — it has not
-> been run against a live Gateway yet. See
+> scanner/pricing/account/order-submitter implementations end-to-end, and has been
+> run against a real paper Gateway (scanner, pricing, screening, and — separately —
+> real order submission/cancellation, all confirmed working). See
 > [Before going live](#before-going-live) for the one open item to confirm first.
 
 ## How the strategy works
@@ -49,12 +50,17 @@ A stock qualifies if:
 - **BUY season:** `X < Y < Z`, then `Z > W`, then `W > V`
 - **SELL season:** `X > Y > Z`, then `Z < W`, then `W < V`
 
-This comparison is deliberately **not** a coded numeric filter — it's performed by an
-LLM (Claude, via the Anthropic Messages API) reading and reasoning over the five
-prices, to avoid the class of bugs (off-by-one, silent parsing errors) a hand-written
-comparison script is prone to. See [`screening/llm_screen.py`](src/natural_trading/screening/llm_screen.py);
-a static test (`test_screening_module_has_no_deterministic_xyzwv_comparison`) fails the
-build if a numeric X/Y/Z/W/V comparison is ever added to that module.
+This is a pure, deterministic numeric comparison — see
+[`screening/llm_screen.py`](src/natural_trading/screening/llm_screen.py). An earlier
+version of this system delegated the comparison to an LLM (Claude, via the Anthropic
+Messages API) reading and reasoning over the five prices, on the theory that this
+would avoid the class of bugs (off-by-one, silent parsing errors) a hand-written
+comparison script is prone to. In practice it produced the opposite: a real candidate
+(MSFT, SELL season) was misclassified as qualifying on an unambiguous comparison
+(`W < V` was false — `388.84` is not less than `384.93`), and a later model upgrade
+silently broke parsing entirely (the model started returning its reasoning as a
+separate "thinking" content block ahead of the answer, which the client code never
+read). Both failure modes are eliminated by comparing the floats directly.
 
 Weekend/holiday phase days fall back to the most recent prior session's close.
 
@@ -102,9 +108,8 @@ src/natural_trading/
     ibkr_prices.py  IBKR-only historical/live price client (IBPriceClient)
   candidates/
     scanner.py      IBKR scanner batching, dedup, rights/warrants/ETF exclusion
-  screening/       The zero-scripts LLM pattern check
-    llm_screen.py       Prompt-building + response parsing, no numeric comparison
-    anthropic_client.py Live Anthropic Messages API client
+  screening/       The lunar-stock pattern check
+    llm_screen.py       Deterministic X/Y/Z/W/V comparison against the season's rule
   sizing.py        Equal-weight sizing, 20% cap, buying-power check
   orders.py        MARKET-only opening/closing order builders
   state.py         Full Moon -> New Moon cash-holding window logic
@@ -112,10 +117,10 @@ src/natural_trading/
     ibkr_account.py Live (uncached) IBKR buying-power fetch
   scheduler.py     Ties it all together: next-trigger computation, New Moon / Full
                    Moon cycle runners
-  config.py        Loads coordinates.input / anthropic.input / ibkr.input
+  config.py        Loads coordinates.input / ibkr.input
   main.py          Entrypoint — wires everything; scheduling loop is a documented TODO
 
-tests/             149 pytest tests, one file per module above
+tests/             153 pytest tests, one file per module above
 preliminary/       Reference-only prototype (find_lunar_stocks.py) used to validate
                    IBKR scanner mechanics during research — not production code
 ```
@@ -136,10 +141,8 @@ whether a given UTC instant falls on a Saturday in Bogotá.
 
 ## Configuration
 
-Three `key=value` files at the repo root, read at runtime (never hardcoded). Only
-`anthropic.input` holds a secret and is gitignored; `coordinates.input` and
-`ibkr.input` contain no sensitive data and are committed with safe paper-trading
-defaults:
+Two `key=value` files at the repo root, read at runtime (never hardcoded). Neither
+holds a secret; both are committed with safe paper-trading defaults:
 
 **`coordinates.input`** — geographic coordinates used for local-day resolution.
 ```
@@ -155,14 +158,6 @@ port=4002
 client_id=7
 ```
 
-**`anthropic.input`** — Anthropic API key and model for the LLM screening step.
-Gitignored; never commit a real key. `model` is optional — omit it to use the default
-(`claude-sonnet-5`).
-```
-api_key=REPLACE_WITH_YOUR_ANTHROPIC_API_KEY
-model=claude-sonnet-5
-```
-
 ## Setup
 
 Requires Python 3.11+ and a running IBKR Gateway/TWS with a paper trading account.
@@ -173,13 +168,10 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-Fill in `anthropic.input` with a real Anthropic API key before running anything that
-touches the screening step.
-
 ## Running tests
 
 ```bash
-pytest -v          # 149 tests
+pytest -v          # 153 tests
 ruff check .        # lint
 mypy .              # type check
 black --check .     # format check
@@ -202,8 +194,10 @@ tested:
   bars into `PhasePrices`, calling `pricing/resolver.py`'s
   `resolve_phase_price_for_instant` / `resolve_v_price_for_instant`.
 
-None of this has been exercised end-to-end against a live IBKR Gateway yet — the test
-suite covers it with fakes, not a real connection.
+The unit test suite covers all of this with fakes, not a real connection. It has
+additionally been run end-to-end against a real paper Gateway: scanner, pricing, and
+screening in a dry run (fake order submission), and separately real order
+submission/cancellation (including the `whatIfOrder` real-margin pre-check).
 
 ## Before going live
 
